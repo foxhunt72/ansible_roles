@@ -1,0 +1,19 @@
+---
+- hosts: localhost
+  tasks:
+  - name: create screenls
+    include_role:
+      name: foxhunt72_screen_ls
+    vars:
+      screen_username: root
+      screen_filename: /tmp/screen-ls.sh
+      screen_program:
+        - name: proef1
+          script: /tmp/proef1.sh
+          time: 5m
+          exclusive: proef1,proef2
+        - name: proef2
+          script: /tmp/proef2.sh
+          time: 5m
+          exclusive: proef1,proef2
+

@@ -1,0 +1,202 @@
+#!/bin/bash
+
+{% if ansible_header is defined %}
+# {{ ansible_header }}
+{% else %}
+# managed by ansible
+{% endif %}
+{% if ansible_rdv_copyright is defined %}
+# {{ ansible_rdv_copyright }}
+{% else %}
+# rdv 2020
+{% endif %}
+
+export PATH="/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin"
+
+{# https://stackoverflow.com/questions/9486393/jinja2-change-the-value-of-a-variable-inside-a-loop #}
+{% set ns = namespace(have_time=false, have_uptime=false, have_normal=false, have_exclusive=false) %}
+{% for program in screen_program %}
+{% if program.time is defined %}
+{% set ns.have_time = True %}
+{% else %}
+{% set ns.have_normal = True %}
+{% endif %}
+{% if program.uptime is defined %}
+{% set ns.have_uptime = True %}
+{% endif %}
+{% if program.exclusive is defined %}
+{% set ns.have_exclusive = True %}
+{% endif %}
+{% endfor -%}
+{% macro uptime_check(variable) %}
+  export COMMAND_UPTIME="{{ variable }}"
+  if test -n "$COMMAND_UPTIME"; then
+    export MINIMAL_UPTIME="$(get_seconds_from_input "$COMMAND_UPTIME")"
+    if test -z "$MINIMAL_UPTIME"; then
+      echo "error: $SCREEN_NAME uptime $COMMAND_UPTIME, not valid, skipping"
+      return
+    fi
+    if test $UPTIME -le $MINIMAL_UPTIME; then
+      echo "skipping $SCREEN_NAME: uptime is $UPTIME, waiting until $MINIMAL_UPTIME ($COMMAND_UPTIME)"
+      return
+    fi
+  fi
+{% endmacro -%}
+
+{% if ns.have_time or ns.have_uptime or (screen_uptime is defined) %}
+# get seconds from input like
+# 1w  = 604800    or
+# 2h  = 7200
+{% raw -%}
+function get_seconds_from_input
+(
+  TS="$1"
+
+  i="$((${#TS}-1))"
+  TS_LAST="${TS:$i:1}"
+  TS_BEFORE="${TS:0:$i}"
+
+  MAX_SECONDS="0"
+
+  case "$TS_LAST" in
+    "m"|"M")
+      MAX_SECONDS=$((TS_BEFORE*60))
+      ;;
+    "h"|"H")
+      MAX_SECONDS=$((TS_BEFORE*3600))
+      ;;
+    "d"|"D")
+      MAX_SECONDS=$((TS_BEFORE*86400))
+      ;;
+    "w"|"W")
+      MAX_SECONDS=$((TS_BEFORE*604800))
+      ;;
+    *)
+      MAX_SECONDS=$TS
+      ;;
+  esac
+
+  if [ -n "$MAX_SECONDS" ] && [ "$MAX_SECONDS" -eq "$MAX_SECONDS" ] 2>/dev/null; then
+    if [ $MAX_SECONDS -gt 0 ]; then
+      echo $MAX_SECONDS
+      return
+    fi
+  fi
+
+  return
+)
+{% endraw -%}
+{% endif -%}
+
+{% if (screen_uptime_min is defined) or (screen_uptime is defined) or ns.have_uptime %}
+export UPTIME="$(cat /proc/uptime | cut -d ' ' -f 1 | cut -d '.' -f 1)"
+{% endif -%}
+{% if screen_uptime_min is defined -%}
+export UPTIME_MINUTES=$((UPTIME / 60))
+if test $UPTIME_MINUTES -le {{ screen_uptime_min }}; then
+  echo "uptime is $UPTIME_MINUTES minutes, waiting until {{ screen_uptime_min }} minutes to start"
+  echo "exiting for now, please try again in $(({{ screen_uptime_min }} - UPTIME_MINUTES)) minutes."
+  exit 0
+fi
+{% endif -%}
+{% if screen_uptime is defined -%}
+
+export MINIMAL_UPTIME="$(get_seconds_from_input "{{ screen_uptime }}")"
+if test -z "$MINIMAL_UPTIME"; then
+  echo "error: uptime {{ screen_uptime }}, not valid."
+  exit 1
+fi
+if test $UPTIME -le $MINIMAL_UPTIME; then
+  echo "uptime is $UPTIME, waiting until $MINIMAL_UPTIME ({{ screen_uptime }})"
+  exit 0
+fi
+{% endif -%}
+
+{% if ns.have_normal -%}
+
+# functie voor screen
+function check_screen
+(
+  export SCREEN_NAME="$1"
+  export COMMAND_SCRIPT="$2"
+{% if ns.have_uptime -%}
+{{ uptime_check('$3') }}
+{% endif -%}
+
+  # check screen
+  if ! /usr/bin/screen -ls | awk '{print $1}' | grep "\.${SCREEN_NAME}$" >/dev/null; then
+	  echo "starting $SCREEN_NAME"
+	  screen -S "${SCREEN_NAME}" -d -m "$COMMAND_SCRIPT"
+  fi
+)
+{% endif -%}
+
+{% if ns.have_time -%}
+# functie voor screen time runce
+function check_screen_runce_once_every_x
+(
+{% if ns.have_exclusive %}
+  if test "$1" = "--exclusive"; then
+    export SCREEN_EXCLUSIVE="$2"
+    shift
+    shift
+    if screen -ls | grep -v "There is a screen" | grep -v "Socket in" | grep -v "No Sockets found" | awk '{print $1}' | cut -d '.' -f 2- | grep -q -F -x -f <(echo "$SCREEN_EXCLUSIVE" | tr "," "\n"); then
+	echo "skipping $1: not starting, still exclusive in use: $SCREEN_EXCLUSIVE"
+	return
+    fi
+  fi
+{% endif %}
+  export SCREEN_NAME="$1"
+  export EVERY_X_TIME="$(get_seconds_from_input "$2")"
+  export COMMAND_SCRIPT="$3"
+{% if ns.have_uptime %}
+{{ uptime_check('$4') }}
+{% endif %}
+  if test -z "$EVERY_X_TIME"; then
+   echo "FAILED: $*" >&2 
+   return
+  fi
+
+
+
+  TIMEDIR="$HOME/.screen-ls.lastrun"
+  test -d "$TIMEDIR" || mkdir "$TIMEDIR"
+
+  export TIMEFILE="${TIMEDIR}/${SCREEN_NAME}.lastrun"
+  if test -f "$TIMEFILE"; then
+    cur_epoch="$(date +%s)"
+    stat_file="$(stat -c "%Z" "$TIMEFILE")"
+    diff_time="$((cur_epoch - stat_file))"
+    if test $diff_time -lt $EVERY_X_TIME; then
+      echo "$SCREEN_NAME: not starting, $diff_time < $EVERY_X_TIME"
+      return
+    fi
+  fi
+
+  # screen screen
+  if ! /usr/bin/screen -ls | awk '{print $1}' | grep "\.${SCREEN_NAME}$" >/dev/null; then
+    echo "starting $SCREEN_NAME (once every $2)"
+    screen -S "${SCREEN_NAME}" -d -m "$COMMAND_SCRIPT"
+    touch "$TIMEFILE"
+  fi
+)
+{% endif -%}
+
+
+/usr/bin/screen -wipe >/dev/null 2>&1
+
+screen -ls | grep -f <(screen -ls | cut -d '.' -f 2| grep "Detached" | awk '{print $1}' | sort | uniq -c | awk '$1!="1"{print "\\." $2 "[[:space:]]"}') | grep Detached | cut -d '.' -f 1 | xargs -r -t kill
+
+{% for program in screen_program %}
+{% if program.time is defined %}
+{% if program.exclusive is defined %}
+{% set exclusive_string = "--exclusive %s"|format(program.exclusive) %}
+{% else %}
+{% set exclusive_string = "" %}
+{% endif %}
+check_screen_runce_once_every_x {{ exclusive_string }} {{ program.name }} {{ program.time }} {{ program.script }} {{program.uptime|default('')}}
+{% else %}
+check_screen {{ program.name }} {{ program.script }} {{program.uptime|default('')}}
+{% endif %}
+{% endfor %}
+

@@ -1,0 +1,24 @@
+---
+# tasks file for foxhunt72_screen_ls
+
+- name: install screen
+  package:
+    name: screen
+  tags: foxhunt72_screen_ls
+
+- name: screen ls template
+  template:
+    src: screen-ls.sh.j2
+    dest: "{{ screen_filename }}"
+    mode: 0700
+    owner: "{{ screen_username }}"
+  tags: foxhunt72_screen_ls
+
+- name: create cron
+  cron:
+    name: "check screen-ls"
+    minute: "{{ screen_cron_minute }}"
+    job: "{{ screen_filename }} > /dev/null 2> /dev/null"
+    user: "{{ screen_username }}"
+  when: (screen_cron_minute is defined) and (screen_cron_minute|length > 0)
+  tags: foxhunt72_screen_ls
