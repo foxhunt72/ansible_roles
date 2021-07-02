@@ -42,6 +42,13 @@ export PATH="/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin"
     fi
   fi
 {% endmacro -%}
+{% if screen_source_dir is defined %}
+{% set ns.have_time = True %}
+{% set ns.have_normal = True %}
+{% set ns.have_uptime = True %}
+{% set ns.have_exclusive = True %}
+{% endif %}
+
 
 {% if ns.have_time or ns.have_uptime or (screen_uptime is defined) %}
 # get seconds from input like
@@ -132,8 +139,8 @@ function check_screen
 {% endif -%}
 
 {% if ns.have_time -%}
-# functie voor screen time runce
-function check_screen_runce_once_every_x
+# functie voor screen time runs
+function check_screen_runs_once_every_x
 (
 {% if ns.have_exclusive %}
   if test "$1" = "--exclusive"; then
@@ -194,9 +201,18 @@ screen -ls | grep -f <(screen -ls | cut -d '.' -f 2| grep "Detached" | awk '{pri
 {% else %}
 {% set exclusive_string = "" %}
 {% endif %}
-check_screen_runce_once_every_x {{ exclusive_string }} {{ program.name }} {{ program.time }} {{ program.script }} {{program.uptime|default('')}}
+check_screen_runs_once_every_x {{ exclusive_string }} {{ program.name }} {{ program.time }} {{ program.script }} {{program.uptime|default('')}}
 {% else %}
 check_screen {{ program.name }} {{ program.script }} {{program.uptime|default('')}}
 {% endif %}
 {% endfor %}
 
+
+{% if screen_source_dir is defined %}
+export -f get_seconds_from_input
+export -f check_screen
+export -f check_screen_runs_once_every_x
+
+# starting screens from {{ screen_source_dir }}
+for f in {{ screen_source_dir }}/*.screen; do source "$f"; done
+{% endif %}

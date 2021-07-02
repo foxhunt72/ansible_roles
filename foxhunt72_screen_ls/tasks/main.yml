@@ -12,7 +12,16 @@
     dest: "{{ screen_filename }}"
     mode: 0700
     owner: "{{ screen_username }}"
+    group: "{{ screen_username }}"
   tags: foxhunt72_screen_ls
+
+- name: create screen_source_dir
+  file:
+    path: "{{ screen_source_dir }}"
+    owner: "{{ screen_username }}"
+    group: "{{ screen_username }}"
+    state: directory
+  when: screen_source_dir is defined
 
 - name: create cron
   cron:
